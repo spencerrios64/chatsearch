@@ -1,4 +1,27 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>chatsearch</title><script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script><style>:root{--bg:#0f1117;--card:#181b24;--bd:#2a2f3d;--tx:#e6e8ee;--mut:#8b92a6;--ac:#7c9cff}
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>chatsearch</title><script>(()=>{const T=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+const crc=u=>{let c=~0;for(let i=0;i<u.length;i++)c=T[(c^u[i])&255]^(c>>>8);return ~c>>>0};
+const enc=new TextEncoder();
+class Z{constructor(){this.items=[];this.pre=''}
+ folder(n){const f=new Z();f.items=this.items;f.pre=this.pre+n+'/';return f}
+ file(n,c){this.items.push([this.pre+n,typeof c==='string'?enc.encode(c):c]);return this}
+ async generateAsync(){const parts=[],cd=[];let off=0;const w=a=>{parts.push(a);off+=a.length};
+  for(const [name,data] of this.items){const nb=enc.encode(name),cr=crc(data);
+   const h=new DataView(new ArrayBuffer(30));h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(6,0x0800,true);h.setUint32(14,cr,true);h.setUint32(18,data.length,true);h.setUint32(22,data.length,true);h.setUint16(26,nb.length,true);
+   const start=off;w(new Uint8Array(h.buffer));w(nb);w(data);
+   const c=new DataView(new ArrayBuffer(46));c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(8,0x0800,true);c.setUint32(16,cr,true);c.setUint32(20,data.length,true);c.setUint32(24,data.length,true);c.setUint16(28,nb.length,true);c.setUint32(42,start,true);
+   cd.push(new Uint8Array(c.buffer),nb)}
+  const cds=off;cd.forEach(w);const e=new DataView(new ArrayBuffer(22));e.setUint32(0,0x06054b50,true);e.setUint16(8,this.items.length,true);e.setUint16(10,this.items.length,true);e.setUint32(12,off-cds,true);e.setUint32(16,cds,true);w(new Uint8Array(e.buffer));
+  return new Blob(parts,{type:'application/zip'})}
+ static async loadAsync(file){const buf=new Uint8Array(await file.arrayBuffer()),dv=new DataView(buf.buffer);let e=buf.length-22;while(e>=0&&dv.getUint32(e,true)!==0x06054b50)e--;
+  if(e<0)throw new Error('not a zip');const n=dv.getUint16(e+10,true);let p=dv.getUint32(e+16,true);const files={};
+  for(let i=0;i<n;i++){const method=dv.getUint16(p+10,true),csz=dv.getUint32(p+20,true),nl=dv.getUint16(p+28,true),el=dv.getUint16(p+30,true),cl=dv.getUint16(p+32,true),lo=dv.getUint32(p+42,true);
+   const name=new TextDecoder().decode(buf.subarray(p+46,p+46+nl));p+=46+nl+el+cl;
+   const ln=dv.getUint16(lo+26,true),le=dv.getUint16(lo+28,true),ds=lo+30+ln+le;
+   files[name]={dir:name.endsWith('/'),async:async()=>{const raw=buf.subarray(ds,ds+csz);if(method===0)return new TextDecoder().decode(raw);
+     const s=new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));return new TextDecoder().decode(await new Response(s).arrayBuffer())}}}
+  return {files}}}
+window.JSZip=Z})();
+</script><style>:root{--bg:#0f1117;--card:#181b24;--bd:#2a2f3d;--tx:#e6e8ee;--mut:#8b92a6;--ac:#7c9cff}
 *{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--tx)}
 main{max-width:980px;margin:0 auto;padding:24px 16px 60px}h1{margin:.2em 0}p.sub{color:var(--mut);margin-top:0}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin:14px 0}
