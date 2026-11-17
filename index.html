@@ -1,0 +1,120 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>chatsearch</title><script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script><style>:root{--bg:#0f1117;--card:#181b24;--bd:#2a2f3d;--tx:#e6e8ee;--mut:#8b92a6;--ac:#7c9cff}
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--tx)}
+main{max-width:980px;margin:0 auto;padding:24px 16px 60px}h1{margin:.2em 0}p.sub{color:var(--mut);margin-top:0}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin:14px 0}
+.drop{border:2px dashed var(--bd);border-radius:12px;padding:28px;text-align:center;color:var(--mut);cursor:pointer}
+.drop.over,.drop:hover{border-color:var(--ac);color:var(--tx)}
+button,select,input,textarea{font:inherit;color:var(--tx);background:#10131b;border:1px solid var(--bd);border-radius:8px;padding:8px 12px}
+button{cursor:pointer;background:var(--ac);color:#0b0e16;border:0;font-weight:600}button.sec{background:#222736;color:var(--tx)}
+button:disabled{opacity:.4;cursor:default}input[type=text],input:not([type]),textarea{width:100%}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.mut{color:var(--mut)}.pill{background:#222736;border-radius:99px;padding:2px 10px;font-size:12px;color:var(--mut)}
+.hit{border-top:1px solid var(--bd);padding:10px 0}.hit:first-child{border:0}mark{background:#5a4b00;color:#ffe98a;border-radius:3px}
+table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--bd);padding:6px 8px;text-align:left}
+.note{font-size:13px;color:var(--mut)}canvas{width:100%;background:#0b0d13;border-radius:12px;border:1px solid var(--bd)}
+</style></head><body><main><h1>chatsearch</h1><p class="sub">Search every AI chat you ever had, in one place. Ranked (BM25 + fuzzy match). Runs in your browser; nothing is uploaded.</p>
+<div class="card"><div class="drop" id="drop">Drop Claude / ChatGPT exports here (conversations.json or the .zip)</div><div id="status" class="note"></div></div>
+<div class="card"><div class="row"><input id="q" placeholder="Search... e.g. docker compose error" style="flex:1;min-width:220px"><select id="ai"><option value="">All AIs</option></select><select id="role"><option value="">Any speaker</option><option value="user">Me</option><option value="assistant">AI</option></select></div>
+<p class="note" id="count"></p><div id="results"></div></div>
+<script>
+/* shared core: parse AI chat exports in the browser (nothing is uploaded) */
+const Chats = (() => {
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  function textOfClaude(m){
+    if (m.text) return m.text;
+    if (Array.isArray(m.content)) return m.content.map(c => c.text || '').join('\n');
+    return '';
+  }
+  function parseData(data, name){
+    const out = [];
+    if (!Array.isArray(data)) data = data && data.conversations ? data.conversations : [data];
+    for (const c of data){
+      if (!c) continue;
+      if (c.chat_messages){ // Claude
+        out.push({id:c.uuid||c.id||name+out.length, title:c.name||'(untitled)', ai:'Claude',
+          created:c.created_at||'', messages:c.chat_messages.map(m=>({role:m.sender==='human'?'user':'assistant', text:textOfClaude(m)})).filter(m=>m.text)});
+      } else if (c.mapping){ // ChatGPT
+        const msgs = Object.values(c.mapping).map(n=>n.message).filter(m=>m&&m.content&&m.author&&m.author.role!=='system'&&m.author.role!=='tool')
+          .sort((a,b)=>(a.create_time||0)-(b.create_time||0))
+          .map(m=>({role:m.author.role, text:(m.content.parts||[]).filter(p=>typeof p==='string').join('\n')})).filter(m=>m.text.trim());
+        out.push({id:c.conversation_id||c.id||name+out.length, title:c.title||'(untitled)', ai:'ChatGPT',
+          created:c.create_time?new Date(c.create_time*1000).toISOString():'', messages:msgs});
+      } else if (Array.isArray(c.messages)){ // generic
+        out.push({id:c.id||name+out.length, title:c.title||c.name||'(untitled)', ai:c.ai||c.source||'Other',
+          created:c.created||c.created_at||'', messages:c.messages.map(m=>({role:m.role||(m.sender==='human'?'user':'assistant'), text:m.text||m.content||''})).filter(m=>m.text)});
+      }
+    }
+    return out;
+  }
+  async function loadFiles(fileList){
+    let all = [];
+    for (const f of fileList){
+      if (/\.zip$/i.test(f.name) && window.JSZip){
+        const z = await JSZip.loadAsync(f);
+        for (const [n, e] of Object.entries(z.files)){
+          if (!e.dir && /\.json$/i.test(n) && /conversation|chat/i.test(n)){
+            try { all = all.concat(parseData(JSON.parse(await e.async('string')), n)); } catch(_){}
+          }
+        }
+      } else if (/\.jsonl$/i.test(f.name)){
+        const lines = (await f.text()).split('\n').filter(Boolean);
+        try { all = all.concat(parseData(lines.map(l=>JSON.parse(l)), f.name)); } catch(_){}
+      } else {
+        try { all = all.concat(parseData(JSON.parse(await f.text()), f.name)); } catch(_){}
+      }
+    }
+    return all;
+  }
+  const fullText = c => c.messages.map(m=>m.text).join('\n');
+  const STOP = new Set('the a an and or but if of to in on at for with from by is are was were be been it this that these those i you he she we they me my your our their as not no so do does did can could would should will just have has had about into than then there what which who how when why also more some any all one'.split(' '));
+  const tokens = s => (s.toLowerCase().match(/[a-z0-9À-ɏͰ-Ͽ]{2,}/g)||[]).filter(w=>!STOP.has(w));
+  function download(name, content, type){
+    const b = content instanceof Blob ? content : new Blob([content], {type: type||'text/plain'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+  }
+  const PATTERNS = [
+    [/sk-[A-Za-z0-9_\-]{20,}/g,'[API_KEY]'],[/AIza[0-9A-Za-z_\-]{30,}/g,'[API_KEY]'],[/gh[pousr]_[A-Za-z0-9]{30,}/g,'[GITHUB_TOKEN]'],
+    [/AKIA[0-9A-Z]{16}/g,'[AWS_KEY]'],[/[\w.+-]+@[\w-]+\.[\w.-]+/g,'[EMAIL]'],[/\bhttps?:\/\/[^\s)]+/g,m=>m],
+    [/(?<!\d)\+?\d[\d\s().-]{8,}\d(?!\d)/g,'[PHONE]'],[/\b(?:\d[ -]*?){13,16}\b/g,'[CARD]']
+  ];
+  const scrub = s => PATTERNS.reduce((t,[re,r])=>t.replace(re,r), s);
+  return {esc, parseData, loadFiles, fullText, tokens, download, scrub};
+})();
+const $ = s => document.querySelector(s);
+function dropzone(el, cb){
+  el.addEventListener('dragover', e=>{e.preventDefault(); el.classList.add('over');});
+  el.addEventListener('dragleave', ()=>el.classList.remove('over'));
+  el.addEventListener('drop', e=>{e.preventDefault(); el.classList.remove('over'); cb(e.dataTransfer.files);});
+  const inp = document.createElement('input'); inp.type='file'; inp.multiple=true; inp.hidden=true; inp.accept='.json,.jsonl,.zip';
+  el.after(inp); el.addEventListener('click', ()=>inp.click()); inp.addEventListener('change', ()=>cb(inp.files));
+}
+
+
+let docs=[], idx=null;
+function build(){
+  const df={}; let total=0;
+  docs.forEach((d,i)=>{d.msgs=d.messages.map((m,j)=>{const t=Chats.tokens(m.text);const tf={};t.forEach(w=>tf[w]=(tf[w]||0)+1);return{i,j,role:m.role,text:m.text,tf,len:t.length}});});
+  const all=docs.flatMap(d=>d.msgs);
+  all.forEach(m=>{total+=m.len;Object.keys(m.tf).forEach(w=>df[w]=(df[w]||0)+1)});
+  idx={all,df,N:all.length,avg:total/Math.max(1,all.length)};
+  const ais=[...new Set(docs.map(d=>d.ai))]; $('#ai').innerHTML='<option value="">All AIs</option>'+ais.map(a=>`<option>${a}</option>`).join('');
+}
+function bm25(m,terms){let s=0;for(const t of terms){const f=m.tf[t]||0;if(!f)continue;const n=idx.df[t]||0;const idf=Math.log(1+(idx.N-n+.5)/(n+.5));s+=idf*f*2.2/(f+1.2*(.25+.75*m.len/idx.avg));}return s;}
+function fuzzy(terms,m){ // prefix match fallback
+  let s=0;for(const t of terms){if(t.length<4)continue;for(const w in m.tf){if(w!==t&&w.startsWith(t.slice(0,Math.max(4,t.length-2)))){s+=.4;break}}}return s;}
+function search(){
+  if(!idx)return;const q=$('#q').value.trim();const terms=Chats.tokens(q);const ai=$('#ai').value,role=$('#role').value;
+  if(!terms.length){$('#results').innerHTML='';$('#count').textContent='';return}
+  const res=[];for(const m of idx.all){const d=docs[m.i];if(ai&&d.ai!==ai)continue;if(role&&m.role!==role)continue;
+    const s=bm25(m,terms)+fuzzy(terms,m);if(s>0)res.push([s,m]);}
+  res.sort((a,b)=>b[0]-a[0]);$('#count').textContent=res.length+' matching messages';
+  const re=new RegExp('('+terms.map(t=>t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')','gi');
+  $('#results').innerHTML=res.slice(0,40).map(([s,m])=>{const d=docs[m.i];
+    let p=m.text.search(re);p=Math.max(0,p-120);const snip=Chats.esc(m.text.slice(p,p+360)).replace(re,'<mark>$1</mark>');
+    return `<div class="hit"><b>${Chats.esc(d.title)}</b> <span class="pill">${d.ai}</span> <span class="pill">${m.role==='user'?'me':'ai'}</span> <span class="note">${d.created.slice(0,10)}</span><div>${p>0?'…':''}${snip}…</div></div>`}).join('');
+}
+dropzone($('#drop'),async fl=>{$('#status').textContent='Reading…';docs=await Chats.loadFiles(fl);build();
+  $('#status').textContent=`${docs.length} chats, ${idx.N} messages indexed.`;search();});
+$('#q').addEventListener('input',search);$('#ai').onchange=search;$('#role').onchange=search;
+</script>
+</main></body></html>
